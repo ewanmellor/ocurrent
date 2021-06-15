@@ -34,8 +34,8 @@ module Make (Meta : sig type t end) = struct
         | Primitive {x; info; meta = _ } -> Fmt.pf f "%a@;>>=@;%s" aux x info
         | Pair (x, y) -> Fmt.pf f "@[<v>@[%a@]@,||@,@[%a@]@]" aux x aux y
         | Gate_on { ctrl; value } -> Fmt.pf f "%a@;>>@;gate (@[%a@])" aux value aux ctrl
-        | List_map { items; output } -> Fmt.pf f "%a@;>>@;list_map (@[%a@])" aux items aux (Current_incr.observe output)
-        | Option_map { item; output } -> Fmt.pf f "%a@;>>@;option_map (@[%a@])" aux item aux (Current_incr.observe output)
+        | List_map { items; output; label = _ } -> Fmt.pf f "%a@;>>@;list_map (@[%a@])" aux items aux (Current_incr.observe output)
+        | Option_map { item; output; label = _ } -> Fmt.pf f "%a@;>>@;option_map (@[%a@])" aux item aux (Current_incr.observe output)
         | State x -> Fmt.pf f "state(@[%a@])" aux x.source
         | Catch x -> Fmt.pf f "catch(@[%a@])" aux x.source
         | Map x -> aux f x
@@ -167,8 +167,22 @@ module Make (Meta : sig type t end) = struct
           | Error (_, `Msg msg) when error_from_self -> Some msg
           | _ -> None
         in
-        let node ?(bg=bg) ?url =
-          Dot.node ~style:"filled" ~bg ?tooltip ?url f in
+        let node ?(bg=bg) ?url ?shape idx label =
+          (* Add a marker to the node if it is for a job (i.e. can be clicked
+             through to reach a build log. *)
+          let suffix =
+            match url with
+            | None -> ""
+            | Some _ -> begin
+              match v with
+              | Ok _ -> " &#x2714;" (* Checkmark *)
+              | Error _ when not error_from_self -> "" (* Blocked *)
+              | Error (_, `Active _) -> " &#x2026;" (* Ellipsis *)
+              | Error (_, `Msg _) when error_from_self -> " &#x2717;" (* Cross *)
+              | _ -> ""
+              end
+          in
+          Dot.node ~style:"filled" ?shape ~bg ?tooltip ?url f idx (label ^ suffix) in
         let outputs =
           match t.ty with
           | Constant (Some l) -> node i l; Out_node.singleton ~deps:ctx i
@@ -268,15 +282,15 @@ module Make (Meta : sig type t end) = struct
               | _ ->
                 aux x
             end
-          | List_map { items; output } ->
+          | List_map { items; output; label } ->
             ignore (aux items);
-            Dot.begin_cluster f i;
+            Dot.begin_cluster f ?label i;
             let outputs = aux (Current_incr.observe output) in
             Dot.end_cluster f;
             outputs
-          | Option_map { item; output } ->
+          | Option_map { item; output; label } ->
             ignore (aux item);
-            Dot.begin_cluster f i;
+            Dot.begin_cluster f ?label i;
             Dot.pp_option f ("style", "dotted");
             let outputs = aux (Current_incr.observe output) in
             Dot.end_cluster f;
@@ -295,9 +309,7 @@ module Make (Meta : sig type t end) = struct
         seen := Id.Map.add t.id outputs !seen;
         outputs
     in
-    Fmt.pf f "@[<v2>digraph pipeline {@,\
-              node [shape=\"box\"]@,\
-              rankdir=LR@,";
+    Dot.digraph f ~fontname:"Roboto,sans-serif" "pipeline";
     let _ = aux (Term x) in
     flush_pending ();
     Fmt.pf f "}@]@."
@@ -400,10 +412,10 @@ module Make (Meta : sig type t end) = struct
               | _ ->
                 aux x
             end
-          | List_map { items; output } ->
+          | List_map { items; output; label = _ } ->
             ignore (aux items);
             aux (Current_incr.observe output)
-          | Option_map { item; output } ->
+          | Option_map { item; output; label = _ } ->
             ignore (aux item);
             aux (Current_incr.observe output)
           | Collapse x ->
